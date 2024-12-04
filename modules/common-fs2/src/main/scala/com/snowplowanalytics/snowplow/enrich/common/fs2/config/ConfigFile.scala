@@ -51,7 +51,8 @@ final case class ConfigFile(
   adaptersSchemas: AdaptersSchemas,
   blobStorage: BlobStorageClients,
   license: License,
-  validation: Validation
+  validation: Validation,
+  hmacVerification: HmacVerification
 )
 
 object ConfigFile {

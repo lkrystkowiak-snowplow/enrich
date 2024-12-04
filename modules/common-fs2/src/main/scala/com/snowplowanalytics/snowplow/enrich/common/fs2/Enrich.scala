@@ -13,37 +13,26 @@ package com.snowplowanalytics.snowplow.enrich.common.fs2
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Instant
 import java.util.Base64
-
 import org.joda.time.DateTime
-
 import cats.data.{Ior, NonEmptyList, ValidatedNel}
 import cats.{Monad, Parallel}
 import cats.implicits._
-
 import cats.effect.kernel.{Async, Clock, Sync}
 import cats.effect.implicits._
-
 import fs2.{Pipe, Stream}
-
 import _root_.io.sentry.SentryClient
-
 import _root_.io.circe.syntax._
-
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-
 import com.snowplowanalytics.iglu.client.IgluCirceClient
 import com.snowplowanalytics.iglu.client.resolver.registries.RegistryLookup
-
 import com.snowplowanalytics.snowplow.badrows.{BadRow, Failure, Processor, Payload => BadRowPayload}
-
 import com.snowplowanalytics.snowplow.enrich.common.EtlPipeline
 import com.snowplowanalytics.snowplow.enrich.common.outputs.EnrichedEvent
 import com.snowplowanalytics.snowplow.enrich.common.adapters.AdapterRegistry
-import com.snowplowanalytics.snowplow.enrich.common.loaders.{CollectorPayload, ThriftLoader}
+import com.snowplowanalytics.snowplow.enrich.common.loaders.{CollectorHmacVerifier, CollectorPayload, ThriftLoader}
 import com.snowplowanalytics.snowplow.enrich.common.enrichments.{AtomicFields, EnrichmentRegistry}
 import com.snowplowanalytics.snowplow.enrich.common.utils.ConversionUtils
-
 import com.snowplowanalytics.snowplow.enrich.common.fs2.config.io.FeatureFlags
 
 object Enrich {
@@ -73,7 +62,8 @@ object Enrich {
         env.metrics.invalidCount,
         env.registryLookup,
         env.atomicFields,
-        env.sinkIncomplete.isDefined
+        env.sinkIncomplete.isDefined,
+        env.collectorHmacVerifier
       )
 
     val enriched =
@@ -121,7 +111,8 @@ object Enrich {
     invalidCount: F[Unit],
     registryLookup: RegistryLookup[F],
     atomicFields: AtomicFields,
-    emitIncomplete: Boolean
+    emitIncomplete: Boolean,
+    collectorHmacVerifier: CollectorHmacVerifier[F]
   )(
     row: Array[Byte]
   ): F[Result] = {
@@ -143,7 +134,8 @@ object Enrich {
                       invalidCount,
                       registryLookup,
                       atomicFields,
-                      emitIncomplete
+                      emitIncomplete,
+                      collectorHmacVerifier
                     )
       } yield (enriched, collectorTstamp)
 

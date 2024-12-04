@@ -11,33 +11,24 @@
 package com.snowplowanalytics.snowplow.enrich.common.fs2
 
 import java.util.concurrent.TimeoutException
-
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
-
 import cats.Show
 import cats.data.EitherT
 import cats.implicits._
-
 import cats.effect.kernel.{Async, Ref, Resource, Sync}
 import cats.effect.kernel.Resource.ExitCase
 import cats.effect.std.Semaphore
-
 import fs2.Stream
-
 import _root_.io.sentry.{Sentry, SentryClient}
-
 import org.http4s.client.{Client => Http4sClient}
 import org.http4s.Status
-
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-
 import com.snowplowanalytics.iglu.client.IgluCirceClient
 import com.snowplowanalytics.iglu.client.resolver.registries.{Http4sRegistryLookup, RegistryLookup}
-
+import com.snowplowanalytics.iglu.core.{PartialSchemaKey, SchemaVer}
 import com.snowplowanalytics.snowplow.badrows.Processor
-
 import com.snowplowanalytics.snowplow.enrich.common.adapters.AdapterRegistry
 import com.snowplowanalytics.snowplow.enrich.common.adapters.registry.RemoteAdapter
 import com.snowplowanalytics.snowplow.enrich.common.enrichments.{AtomicFields, EnrichmentRegistry}
@@ -45,7 +36,6 @@ import com.snowplowanalytics.snowplow.enrich.common.enrichments.registry.Enrichm
 import com.snowplowanalytics.snowplow.enrich.common.enrichments.registry.EnrichmentConf.ApiRequestConf
 import com.snowplowanalytics.snowplow.enrich.common.outputs.EnrichedEvent
 import com.snowplowanalytics.snowplow.enrich.common.utils.{HttpClient, ShiftExecution}
-
 import com.snowplowanalytics.snowplow.enrich.common.fs2.config.{ConfigFile, ParsedConfigs}
 import com.snowplowanalytics.snowplow.enrich.common.fs2.config.io.Input.Kinesis
 import com.snowplowanalytics.snowplow.enrich.common.fs2.config.io.{
@@ -58,6 +48,7 @@ import com.snowplowanalytics.snowplow.enrich.common.fs2.config.io.{
 import com.snowplowanalytics.snowplow.enrich.common.fs2.io.{Clients, Metrics}
 import com.snowplowanalytics.snowplow.enrich.common.fs2.io.Clients.Client
 import com.snowplowanalytics.snowplow.enrich.common.fs2.io.experimental.Metadata
+import com.snowplowanalytics.snowplow.enrich.common.loaders.CollectorHmacVerifier
 
 /**
  * All allocated resources, configs and mutable variables necessary for running Enrich process
@@ -129,7 +120,8 @@ final case class Environment[F[_], A](
   region: Option[String],
   cloud: Option[Cloud],
   featureFlags: FeatureFlags,
-  atomicFields: AtomicFields
+  atomicFields: AtomicFields,
+  collectorHmacVerifier: CollectorHmacVerifier[F]
 )
 
 object Environment {
@@ -220,6 +212,13 @@ object Environment {
       sem <- Resource.eval(Semaphore(1L))
       assetsState <- Resource.eval(Assets.State.make[F](sem, clts, assets))
       shifter <- ShiftExecution.ofSingleThread[F]
+      collectorHmacVerifier = CollectorHmacVerifier(
+                                file.hmacVerification.enabled,
+                                List(Some(file.hmacVerification.key1), file.hmacVerification.key2).flatten,
+                                file.hmacVerification.schemaKeys.map(sk =>
+                                  PartialSchemaKey(sk.vendor, sk.name, sk.format, SchemaVer.Partial(None, None, None))
+                                )
+                              )
       enrichments <- Enrichments.make[F](parsedConfigs.enrichmentConfigs, blockingEC, shifter)
     } yield Environment[F, A](
       igluClient,
@@ -252,7 +251,8 @@ object Environment {
       getRegionFromConfig(file).orElse(getRegion),
       cloud,
       featureFlags,
-      atomicFields
+      atomicFields,
+      collectorHmacVerifier
     )
   }
 

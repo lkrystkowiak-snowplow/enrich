@@ -13,17 +13,13 @@ package com.snowplowanalytics.snowplow.enrich.common
 import cats.data.{Ior, Validated, ValidatedNel}
 import cats.effect.kernel.Sync
 import cats.implicits._
-
 import org.joda.time.DateTime
-
 import com.snowplowanalytics.iglu.client.IgluCirceClient
 import com.snowplowanalytics.iglu.client.resolver.registries.RegistryLookup
-
 import com.snowplowanalytics.snowplow.badrows.{BadRow, Processor}
-
 import com.snowplowanalytics.snowplow.enrich.common.adapters.AdapterRegistry
 import com.snowplowanalytics.snowplow.enrich.common.enrichments.{AtomicFields, EnrichmentManager, EnrichmentRegistry}
-import com.snowplowanalytics.snowplow.enrich.common.loaders.CollectorPayload
+import com.snowplowanalytics.snowplow.enrich.common.loaders.{CollectorHmacVerifier, CollectorPayload}
 import com.snowplowanalytics.snowplow.enrich.common.outputs.EnrichedEvent
 
 /** Expresses the end-to-end event pipeline supported by the Scala Common Enrich project. */
@@ -60,7 +56,8 @@ object EtlPipeline {
     invalidCount: F[Unit],
     registryLookup: RegistryLookup[F],
     atomicFields: AtomicFields,
-    emitIncomplete: Boolean
+    emitIncomplete: Boolean,
+    collectorHmacVerifier: CollectorHmacVerifier[F]
   ): F[List[Ior[BadRow, EnrichedEvent]]] =
     input match {
       case Validated.Valid(Some(payload)) =>
@@ -68,22 +65,26 @@ object EtlPipeline {
           .toRawEvents(payload, client, processor, registryLookup)
           .flatMap {
             case Validated.Valid(rawEvents) =>
-              rawEvents.toList.traverse { event =>
-                EnrichmentManager
-                  .enrichEvent(
-                    enrichmentRegistry,
-                    client,
-                    processor,
-                    etlTstamp,
-                    event,
-                    featureFlags,
-                    invalidCount,
-                    registryLookup,
-                    atomicFields,
-                    emitIncomplete
-                  )
-                  .value
-              }
+              rawEvents.toList
+                .traverse { event =>
+                  EnrichmentManager
+                    .enrichEvent(
+                      enrichmentRegistry,
+                      client,
+                      processor,
+                      etlTstamp,
+                      event,
+                      featureFlags,
+                      invalidCount,
+                      registryLookup,
+                      atomicFields,
+                      emitIncomplete
+                    )
+                    .value
+                }
+                .flatMap { enrichedEvents =>
+                  collectorHmacVerifier.processEvents(payload, enrichedEvents, processor, etlTstamp)
+                }
             case Validated.Invalid(badRow) =>
               Sync[F].pure(List(Ior.left(badRow)))
           }

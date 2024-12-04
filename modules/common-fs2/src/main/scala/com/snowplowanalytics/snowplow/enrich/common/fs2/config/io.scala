@@ -567,4 +567,22 @@ object io {
       Right(AtomicFields.from(fieldsLimits))
   }
 
+  case class HmacVerification(
+    enabled: Boolean,
+    key1: String,
+    key2: Option[String],
+    schemaKeys: List[HmacVerification.SchemaKey]
+  )
+
+  object HmacVerification {
+    case class SchemaKey(
+      vendor: String,
+      name: String,
+      format: String
+    )
+
+    implicit val schemaKeyDecoder: Decoder[SchemaKey] = deriveConfiguredDecoder
+    implicit val hmacVerificationDecoder: Decoder[HmacVerification] = deriveConfiguredDecoder
+  }
+
 }
